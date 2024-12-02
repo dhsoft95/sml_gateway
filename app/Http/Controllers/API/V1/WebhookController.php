@@ -13,85 +13,140 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Database\QueryException;
+use Illuminate\Validation\ValidationException;
 
 class WebhookController extends Controller
 {
-    public function handleSimbaWebhook(Request $request)
+    const QR_STATUS_ACTIVE = 'ACTIVE';
+    const QR_STATUS_USED = 'USED';
+    const QR_STATUS_EXPIRED = 'EXPIRED';
+
+    public function handleSimbaWebhook(Request $request): \Illuminate\Http\JsonResponse
     {
-        Log::info('Webhook received', $request->all());
+        Log::info('Simba Money webhook received', [
+            'payload' => $request->all(),
+            'headers' => $request->headers->all()
+        ]);
 
         try {
-            $payload = $request->validate([
-                'invoice_id' => 'required|string',
+            $validated = $request->validate([
+                'invoice_id' => 'required|string|exists:invoices,external_id',
                 'transaction_id' => 'required|string',
-                'status' => 'required|string',
-                'amount' => 'required',
-                'currency' => 'required|string',
+                'status' => 'required|string|in:SUCCESS,COMPLETED,FAILED,REJECTED,EXPIRED,PENDING',
+                'amount' => 'required|array',
+                'amount.value' => 'required|string',
+                'amount.currency' => 'required|string|size:3',
+                'amount.formatted' => 'required|string',
                 'provider_reference' => 'required|string',
-                'payment_method' => 'required|string',
-                'processed_at' => 'required',
+                'processed_at' => 'required|date',
                 'payer_details' => 'required|array',
                 'payer_details.phone' => 'required|string',
                 'payer_details.email' => 'nullable|email',
-                'control_number' => 'required|string'
+                'merchant_id' => 'required|string',
+                'metadata' => 'required|array',
+                'metadata.order_id' => 'required|string',
+                'metadata.customer_id' => 'required|string',
+                'metadata.description' => 'required|string',
+                'metadata.department' => 'required|string',
+                'metadata.reference' => 'required|string',
+                'signature' => 'required|string'
             ]);
 
-            return DB::transaction(function() use ($payload) {
-                $qrCode = QRCode::where('control_number', $payload['control_number'])->firstOrFail();
-                $invoice = $qrCode->invoice;
+            return DB::transaction(function() use ($validated) {
+                // Get invoice
+                $invoice = Invoice::where('external_id', $validated['invoice_id'])
+                    ->where('merchant_id', $validated['merchant_id'])
+                    ->firstOrFail();
 
-                if (!$this->verifyAmount($invoice, $payload['amount'])) {
-                    throw new \Exception('Amount mismatch detected');
+                // Get QR code
+                $qrCode = QRCode::where('invoice_id', $invoice->id)
+                    ->where('status', self::QR_STATUS_ACTIVE)
+                    ->firstOrFail();
+
+                // Verify amount
+                $paidAmount = (float) $validated['amount']['value'];
+
+                if (abs($invoice->bill_amount - $paidAmount) >= 0.01 ||
+                    $invoice->currency_code !== $validated['amount']['currency']) {
+                    throw new \Exception(sprintf(
+                        'Amount mismatch: expected %s %s, got %s %s',
+                        $invoice->bill_amount,
+                        $invoice->currency_code,
+                        $paidAmount,
+                        $validated['amount']['currency']
+                    ));
                 }
 
                 try {
-                    $transaction = Transaction::where('transaction_id', $payload['transaction_id'])->first();
-
-                    if ($transaction) {
-                        // If transaction exists, verify it matches current payload
-                        if ($transaction->invoice_id != $invoice->id ||
-                            $transaction->amount != $payload['amount']) {
-                            Log::error('Transaction mismatch', [
-                                'existing' => $transaction->toArray(),
-                                'payload' => $payload
-                            ]);
-                            throw new \Exception('Transaction data mismatch');
-                        }
-
-                        // Update status if needed
-                        $newStatus = $this->mapPaymentStatus($payload['status']);
-                        if ($transaction->status !== $newStatus) {
-                            $transaction->update(['status' => $newStatus]);
-                            $invoice->update(['status' => $newStatus]);
-                        }
-                    } else {
-                        // Create new transaction
-                        $transaction = Transaction::create([
+                    // Create or update transaction
+                    $transaction = Transaction::updateOrCreate(
+                        ['transaction_id' => $validated['transaction_id']],
+                        [
                             'invoice_id' => $invoice->id,
-                            'transaction_id' => $payload['transaction_id'],
-                            'control_number' => $payload['control_number'],
-                            'amount' => $payload['amount'],
-                            'currency' => $payload['currency'],
-                            'status' => $this->mapPaymentStatus($payload['status']),
-                            'payment_method' => $payload['payment_method'],
-                            'payer_details' => $payload['payer_details'],
-                            'processed_at' => $payload['processed_at'],
-                            'provider_response' => $payload
-                        ]);
+                            'control_number' => $qrCode->control_number,
+                            'amount' => $paidAmount,
+                            'currency' => $validated['amount']['currency'],
+                            'status' => $this->mapPaymentStatus($validated['status']),
+                            'payment_method' => 'simba_money',
+                            'payer_details' => $validated['payer_details'],
+                            'provider_reference' => $validated['provider_reference'],
+                            'processed_at' => $validated['processed_at'],
+                            'provider_response' => $validated
+                        ]
+                    );
 
-                        $invoice->update([
-                            'status' => $this->mapPaymentStatus($payload['status'])
-                        ]);
+                    // Update statuses
+                    $newStatus = $this->mapPaymentStatus($validated['status']);
+
+                    // Update invoice status
+                    $invoice->update(['status' => $newStatus]);
+
+                    // Update QR code status based on payment status
+                    $qrCodeStatus = match($newStatus) {
+                        'PAID' => self::QR_STATUS_USED,
+                        'FAILED', 'EXPIRED' => self::QR_STATUS_EXPIRED,
+                        default => self::QR_STATUS_ACTIVE
+                    };
+
+                    // Log before QR code update
+                    Log::info('Updating QR code status', [
+                        'qr_code_id' => $qrCode->id,
+                        'current_status' => $qrCode->status,
+                        'new_status' => $qrCodeStatus
+                    ]);
+
+                    if ($qrCodeStatus !== $qrCode->status) {
+                        $qrCode->status = $qrCodeStatus;
+                        $qrCode->save();
                     }
 
+                    // Queue callback
                     dispatch(new ProcessCallbackJob($invoice, $transaction));
+
+                    Log::info('Webhook processed successfully', [
+                        'transaction_id' => $transaction->transaction_id,
+                        'invoice_id' => $invoice->external_id,
+                        'status' => $newStatus,
+                        'qr_code_status' => $qrCodeStatus
+                    ]);
 
                     return response()->json([
                         'status' => 'success',
-                        'message' => 'Webhook processed successfully'
+                        'message' => 'Webhook processed successfully',
+                        'data' => [
+                            'transaction_id' => $transaction->transaction_id,
+                            'invoice_status' => $newStatus,
+                            'qr_code_status' => $qrCodeStatus,
+                            'processed_at' => now()->toIso8601String()
+                        ]
                     ]);
 
                 } catch (QueryException $e) {
+                    Log::error('Database error', [
+                        'error' => $e->getMessage(),
+                        'code' => $e->getCode()
+                    ]);
+
                     if ($e->getCode() === '23000') {
                         return response()->json([
                             'status' => 'success',
@@ -101,6 +156,18 @@ class WebhookController extends Controller
                     throw $e;
                 }
             });
+
+        } catch (ValidationException $e) {
+            Log::warning('Webhook validation failed', [
+                'errors' => $e->errors(),
+                'payload' => $request->all()
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid webhook payload',
+                'errors' => $e->errors()
+            ], 422);
 
         } catch (\Exception $e) {
             Log::error('Webhook processing failed', [
@@ -112,20 +179,16 @@ class WebhookController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to process webhook',
-                'error' => $e->getMessage()
+                'error_code' => 'WEBHOOK_PROCESSING_FAILED',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
             ], 500);
         }
     }
 
-    private function verifyAmount(Invoice $invoice, float $paidAmount): bool
-    {
-        return abs($invoice->amount - $paidAmount) < 0.01;
-    }
-
     private function mapPaymentStatus(string $status): string
     {
-        return match($status) {
-            'COMPLETED' => 'PAID',
+        return match(strtoupper($status)) {
+            'SUCCESS', 'COMPLETED' => 'PAID',
             'FAILED', 'REJECTED' => 'FAILED',
             'EXPIRED' => 'EXPIRED',
             'PENDING' => 'PENDING',

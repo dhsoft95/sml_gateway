@@ -12,7 +12,8 @@
         "laravel/framework": "^11.31",
         "laravel/passport": "^12.3",
         "laravel/tinker": "^2.9",
-        "spatie/laravel-webhook-client": "^3.4"
+        "spatie/laravel-webhook-client": "^3.4",
+        "ext-bcmath": "*"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

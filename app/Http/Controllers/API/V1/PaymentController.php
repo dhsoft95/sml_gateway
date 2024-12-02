@@ -5,11 +5,13 @@ namespace App\Http\Controllers\API\V1;
 use App\Http\Controllers\Controller;
 use App\Models\FailedCallback;
 use App\Models\QRCode;
+use App\Models\Invoice;
 use App\Models\Transaction;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 class PaymentController extends Controller
 {
@@ -18,201 +20,262 @@ class PaymentController extends Controller
      */
     public function process(Request $request): \Illuminate\Http\JsonResponse
     {
-        $request->validate([
-            'control_number' => 'required|string',
-            'payment_method' => 'required|string',
-            'payer_details' => 'required|array',
-            'payer_details.phone' => 'required|string',
-            'payer_details.email' => 'nullable|email'
-        ]);
+        try {
+            $validated = $request->validate([
+                'control_number' => 'required|string',
+                'payment_method' => 'required|string',
+                'payer_details' => 'required|array',
+                'payer_details.phone' => 'required|string',
+                'payer_details.email' => 'nullable|email'
+            ]);
 
-        $qrCode = QRCode::where('control_number', $request->control_number)
-            ->where('status', 'ACTIVE')
-            ->where('expires_at', '>', now())
-            ->with('invoice')
-            ->first();
+            // Find active QR code and related invoice
+            $qrCode = QRCode::where('control_number', $validated['control_number'])
+                ->where('status', 'ACTIVE')
+                ->where('expires_at', '>', now())
+                ->with(['invoice' => function($query) {
+                    $query->where('status', 'PENDING');
+                }])
+                ->first();
 
-        if (!$qrCode || $qrCode->invoice->status !== 'PENDING') {
+            if (!$qrCode || !$qrCode->invoice) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid control number or expired QR code',
+                    'error_code' => 'INVALID_PAYMENT_REQUEST'
+                ], 400);
+            }
+
+            // Process payment in transaction
+            $result = DB::transaction(function () use ($qrCode, $validated) {
+                // Create transaction
+                $transaction = Transaction::create([
+                    'transaction_id' => 'TXN' . Str::random(12),
+                    'invoice_id' => $qrCode->invoice->id,
+                    'amount' => $qrCode->invoice->bill_amount,
+                    'currency' => $qrCode->invoice->currency_code,
+                    'payment_method' => $validated['payment_method'],
+                    'status' => 'PROCESSING',
+                    'payer_details' => $validated['payer_details'],
+                ]);
+
+                // Update invoice status
+                $qrCode->invoice->update(['status' => 'PROCESSING']);
+
+                return $transaction;
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'transaction_id' => $result->transaction_id,
+                    'amount' => [
+                        'value' => $result->amount,
+                        'currency' => $result->currency,
+                        'formatted' => number_format($result->amount, 2) . ' ' . $result->currency
+                    ],
+                    'payment_instructions' => $this->getPaymentInstructions($result)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Payment processing failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request' => $request->except(['password', 'token'])
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => 'Invalid control number or invoice status',
-                'error_code' => 'INVALID_PAYMENT_REQUEST'
-            ], 400);
+                'message' => 'Failed to process payment',
+                'error_code' => 'PAYMENT_PROCESSING_FAILED'
+            ], 500);
         }
-
-        // Create transaction and update invoice status in one step
-        $transaction = Transaction::create([
-            'transaction_id' => 'TXN' . Str::random(12),
-            'invoice_id' => $qrCode->invoice->id,
-            'amount' => $qrCode->invoice->amount,
-            'currency' => $qrCode->invoice->currency,
-            'payment_method' => $request->payment_method,
-            'status' => 'PROCESSING',
-            'payer_details' => $request->payer_details,
-        ]);
-
-        // Update invoice status
-        $qrCode->invoice->update(['status' => 'PROCESSING']);
-
-        return response()->json([
-            'status' => 'success',
-            'data' => [
-                'transaction_id' => $transaction->transaction_id,
-                'amount' => [
-                    'value' => $transaction->amount,
-                    'currency' => $transaction->currency,
-                    'formatted' => number_format($transaction->amount, 2) . ' ' . $transaction->currency
-                ],
-                'payment_instructions' => $this->getPaymentInstructions($transaction)
-            ]
-        ]);
     }
 
     /**
      * Confirm payment (called by payment provider)
      */
-    public function confirm(Request $request)
+
+    public function confirm(Request $request): \Illuminate\Http\JsonResponse
     {
-        $request->validate([
-            'transaction_id' => 'required|string',
-            'provider_reference' => 'required|string',
-            'status' => 'required|string|in:SUCCESS,FAILED',
-            'amount' => 'required|numeric',
-            'currency' => 'required|string',
-            'paid_at' => 'required|date'
-        ]);
+        try {
+            $validated = $request->validate([
+                'transaction_id' => 'required|string',
+                'provider_reference' => 'required|string',
+                'status' => 'required|string|in:SUCCESS,FAILED',
+                'amount' => 'required|numeric|min:0',
+                'currency' => 'required|string|size:3',
+                'paid_at' => 'required|date'
+            ]);
 
-        $transaction = Transaction::where('transaction_id', $request->transaction_id)
-            ->with('invoice')
-            ->firstOrFail();
+            // Find transaction
+            $transaction = Transaction::where('transaction_id', $validated['transaction_id'])
+                ->with('invoice')
+                ->first();
 
-        if ($transaction->status !== 'PROCESSING') {
+            // If transaction not found
+            if (!$transaction) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Transaction not found',
+                    'error_code' => 'TRANSACTION_NOT_FOUND'
+                ], 404);
+            }
+
+            // Check transaction status
+            if ($transaction->status !== 'PROCESSING') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Transaction is not in processing status',
+                    'error_code' => 'INVALID_TRANSACTION_STATUS'
+                ], 400);
+            }
+
+            // Verify amount matches
+            if (bccomp($transaction->amount, $validated['amount'], 2) !== 0) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Amount mismatch',
+                    'error_code' => 'AMOUNT_MISMATCH'
+                ], 400);
+            }
+
+            // Process confirmation
+            try {
+                DB::transaction(function () use ($transaction, $validated) {
+                    $transaction->update([
+                        'status' => $validated['status'],
+                        'provider_reference' => $validated['provider_reference'],
+                        'provider_response' => $validated,
+                        'processed_at' => $validated['paid_at']
+                    ]);
+
+                    $transaction->invoice->update([
+                        'status' => $validated['status'] === 'SUCCESS' ? 'PAID' : 'FAILED'
+                    ]);
+                });
+            } catch (\Exception $e) {
+                Log::error('Database transaction failed', [
+                    'error' => $e->getMessage(),
+                    'transaction_id' => $validated['transaction_id']
+                ]);
+
+                // This is a real 500 error - database failure
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'System error while processing payment',
+                    'error_code' => 'SYSTEM_ERROR'
+                ], 500);
+            }
+
+            // Send callback
+            $this->sendCallback($transaction);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Payment confirmation processed'
+            ]);
+
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Invalid transaction status',
-                'error_code' => 'INVALID_TRANSACTION_STATUS'
+                'message' => 'Invalid request data',
+                'error_code' => 'VALIDATION_ERROR',
+                'errors' => $e->errors()
             ], 400);
         }
-
-        // Update transaction and invoice status
-        $transaction->update([
-            'status' => $request->status === 'SUCCESS' ? 'COMPLETED' : 'FAILED',
-            'provider_reference' => $request->provider_reference,
-            'provider_response' => $request->all(),
-            'processed_at' => $request->paid_at
-        ]);
-
-        $transaction->invoice->update([
-            'status' => $request->status === 'SUCCESS' ? 'PAID' : 'FAILED'
-        ]);
-
-        // Send callback to merchant
-        $this->sendCallback($transaction);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Payment confirmation processed'
-        ]);
     }
 
-    private function getPaymentInstructions($transaction)
+    private function getPaymentInstructions($transaction): array
     {
         return [
             'en' => [
                 'title' => 'Payment Instructions',
                 'amount' => number_format($transaction->amount, 2) . ' ' . $transaction->currency,
                 'steps' => [
-                    'Make payment using your preferred method',
-                    'Use transaction ID: ' . $transaction->transaction_id,
-                    'Payment will be confirmed automatically'
+                    'Open Simba Money app on your phone',
+                    'Enter transaction ID: ' . $transaction->transaction_id,
+                    'Confirm payment amount: ' . number_format($transaction->amount, 2) . ' ' . $transaction->currency,
+                    'Enter your PIN to complete payment'
                 ]
             ],
             'sw' => [
                 'title' => 'Maelekezo ya Malipo',
                 'amount' => number_format($transaction->amount, 2) . ' ' . $transaction->currency,
                 'steps' => [
-                    'Fanya malipo kwa njia unayopendelea',
-                    'Tumia namba ya muamala: ' . $transaction->transaction_id,
-                    'Malipo yatathibitishwa moja kwa moja'
+                    'Fungua app ya Simba Money kwenye simu yako',
+                    'Ingiza namba ya muamala: ' . $transaction->transaction_id,
+                    'Hakiki kiasi cha malipo: ' . number_format($transaction->amount, 2) . ' ' . $transaction->currency,
+                    'Ingiza namba yako ya siri kukamilisha malipo'
                 ]
             ]
         ];
     }
 
-    private function sendCallback($transaction)
+    private function sendCallback($transaction): void
     {
         try {
-            // Verify callback URL is valid
             if (!filter_var($transaction->invoice->callback_url, FILTER_VALIDATE_URL)) {
-                Log::error('Invalid callback URL', [
-                    'transaction_id' => $transaction->transaction_id,
-                    'callback_url' => $transaction->invoice->callback_url
-                ]);
-                return false;
+                throw new \Exception('Invalid callback URL');
             }
 
-            // Prepare callback data
             $callbackData = [
                 'invoice_id' => $transaction->invoice->external_id,
                 'transaction_id' => $transaction->transaction_id,
                 'status' => $transaction->status,
-                'amount' => $transaction->amount,
-                'currency' => $transaction->currency,
+                'amount' => [
+                    'value' => $transaction->amount,
+                    'currency' => $transaction->currency,
+                    'formatted' => number_format($transaction->amount, 2) . ' ' . $transaction->currency
+                ],
                 'provider_reference' => $transaction->provider_reference,
                 'processed_at' => $transaction->processed_at,
                 'payer_details' => $transaction->payer_details,
-                'control_number' => $transaction->invoice->qrCode->control_number
+                'merchant_id' => $transaction->invoice->merchant_id,
+                'metadata' => $transaction->invoice->metadata
             ];
 
-            // Add signature for security (if needed)
+            // Add security signature
             $callbackData['signature'] = hash_hmac('sha256',
                 json_encode($callbackData),
-                config('services.psp.webhook_secret')
+                config('services.payment.webhook_secret')
             );
 
-            // Send callback with timeout and retry
             $response = Http::timeout(15)
                 ->withHeaders([
-                    'X-API-Key' => config('services.psp.api_key'),
+                    'X-API-Key' => config('services.payment.api_key'),
                     'Content-Type' => 'application/json',
                 ])
                 ->post($transaction->invoice->callback_url, $callbackData);
 
-            // Log success
+            if (!$response->successful()) {
+                throw new \Exception('Callback request failed with status: ' . $response->status());
+            }
+
             Log::info('Payment callback sent successfully', [
                 'transaction_id' => $transaction->transaction_id,
-                'callback_url' => $transaction->invoice->callback_url,
-                'response_status' => $response->status(),
-                'response_body' => $response->json()
+                'response_status' => $response->status()
             ]);
-
-            return true;
 
         } catch (\Exception $e) {
-            // Log the error with details
             Log::error('Payment callback failed', [
                 'transaction_id' => $transaction->transaction_id,
-                'callback_url' => $transaction->invoice->callback_url,
-                'error' => $e->getMessage(),
-                'error_type' => get_class($e)
+                'error' => $e->getMessage()
             ]);
 
-            // Store failed callback for retry
             $this->storeFailedCallback($transaction, $callbackData ?? []);
-
-            return false;
         }
     }
 
-    private function storeFailedCallback($transaction, $callbackData)
+    private function storeFailedCallback($transaction, array $callbackData): void
     {
-        // Create a failed callback record for retry
         FailedCallback::create([
             'transaction_id' => $transaction->transaction_id,
             'callback_url' => $transaction->invoice->callback_url,
             'payload' => $callbackData,
             'attempts' => 0,
-            'next_retry_at' => now()->addMinutes(5), // First retry after 5 minutes
+            'next_retry_at' => now()->addMinutes(5),
             'status' => 'PENDING'
         ]);
     }

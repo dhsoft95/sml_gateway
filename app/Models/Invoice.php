@@ -13,8 +13,11 @@ class Invoice extends Model
     protected $fillable = [
         'external_id',
         'merchant_id',
-        'amount',
-        'currency',
+        'bill_amount',
+        'service_code',
+        'payer_name',
+        'currency_code',
+        'invoice_number',
         'status',
         'callback_url',
         'metadata'

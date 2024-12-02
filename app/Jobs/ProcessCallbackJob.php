@@ -14,54 +14,132 @@ use Illuminate\Support\Facades\Log;
 
 class ProcessCallbackJob implements ShouldQueue
 {
-
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct(
-        private Invoice $invoice,
-        private Transaction $transaction
-    ) {}
+    /**
+     * Number of times the job may be attempted.
+     */
+    public $tries = 3;
 
+    /**
+     * Maximum number of exceptions to allow before failing.
+     */
+    public $maxExceptions = 3;
+
+    /**
+     * The number of seconds to wait before retrying the job.
+     */
+    public $backoff = [10, 60, 180]; // Retry after 10s, 1min, 3min
+
+    /**
+     * The invoice instance.
+     */
+    protected Invoice $invoice;
+
+    /**
+     * The transaction instance.
+     */
+    protected Transaction $transaction;
+
+    /**
+     * Create a new job instance.
+     */
+    public function __construct(Invoice $invoice, Transaction $transaction)
+    {
+        $this->invoice = $invoice;
+        $this->transaction = $transaction;
+    }
+
+    /**
+     * Execute the job.
+     */
     public function handle(): void
     {
-        $callbackData = [
-            'invoice_id' => $this->invoice->external_id,
-            'control_number' => $this->transaction->control_number,
-            'status' => $this->transaction->status,
-            'amount' => $this->transaction->amount,
-            'currency' => $this->transaction->currency,
-            'transaction_id' => $this->transaction->transaction_id,
-            'provider_reference' => $this->transaction->provider_reference,
-            'payment_method' => $this->transaction->payment_method,
-            'payer_details' => $this->transaction->payer_details,
-            'processed_at' => $this->transaction->processed_at,
-            'metadata' => $this->invoice->metadata
-        ];
-
         try {
-            $response = Http::timeout(30)
-                ->withHeaders(['Content-Type' => 'application/json'])
+            Log::info('Processing callback for transaction', [
+                'transaction_id' => $this->transaction->transaction_id,
+                'invoice_id' => $this->invoice->external_id
+            ]);
+
+            // Prepare callback data
+            $callbackData = [
+                'invoice_id' => $this->invoice->external_id,
+                'transaction_id' => $this->transaction->transaction_id,
+                'status' => $this->transaction->status,
+                'amount' => [
+                    'value' => $this->transaction->amount,
+                    'currency' => $this->transaction->currency,
+                    'formatted' => number_format($this->transaction->amount, 2) . ' ' . $this->transaction->currency
+                ],
+                'provider_reference' => $this->transaction->provider_reference,
+                'processed_at' => $this->transaction->processed_at,
+                'payer_details' => $this->transaction->payer_details,
+                'merchant_id' => $this->invoice->merchant_id,
+                'metadata' => $this->invoice->metadata
+            ];
+
+            // Generate signature
+            $callbackData['signature'] = hash_hmac(
+                'sha256',
+                json_encode($callbackData),
+                config('services.simba.webhook_secret')
+            );
+
+            // Send callback
+            $response = Http::timeout(15)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'User-Agent' => 'SimbaMoneyCallback/1.0',
+                    'X-Callback-Token' => config('services.simba.callback_token'),
+                    'X-Transaction-ID' => $this->transaction->transaction_id
+                ])
                 ->post($this->invoice->callback_url, $callbackData);
 
             if (!$response->successful()) {
-                throw new \Exception("Callback failed with status: {$response->status()}");
+                Log::error('Callback request failed', [
+                    'transaction_id' => $this->transaction->transaction_id,
+                    'status_code' => $response->status(),
+                    'response' => $response->json()
+                ]);
+
+                throw new \Exception(
+                    "Callback failed with status: {$response->status()}, Body: " .
+                    substr($response->body(), 0, 500)
+                );
             }
 
-            Log::info('Callback sent', [
-                'invoice_id' => $this->invoice->external_id,
+            Log::info('Callback sent successfully', [
+                'transaction_id' => $this->transaction->transaction_id,
                 'status_code' => $response->status(),
                 'response' => $response->json()
             ]);
+
         } catch (\Exception $e) {
-            Log::error('Callback failed', [
-                'invoice_id' => $this->invoice->external_id,
+            Log::error('Callback processing failed', [
+                'transaction_id' => $this->transaction->transaction_id,
                 'error' => $e->getMessage(),
                 'attempt' => $this->attempts()
             ]);
 
-            $this->release(
-                $this->attempts() * 300
-            );
+            // If we haven't exceeded max retries, throw the exception to trigger a retry
+            if ($this->attempts() < $this->tries) {
+                throw $e;
+            }
+
+            $this->fail($e);
         }
+    }
+
+    /**
+     * Handle a job failure.
+     */
+    public function failed(\Throwable $exception): void
+    {
+        Log::error('Callback job failed permanently', [
+            'transaction_id' => $this->transaction->transaction_id,
+            'invoice_id' => $this->invoice->external_id,
+            'error' => $exception->getMessage(),
+            'attempts' => $this->attempts()
+        ]);
     }
 }

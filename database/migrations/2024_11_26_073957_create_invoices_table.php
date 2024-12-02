@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
+class CreateInvoicesTable extends Migration
 {
     /**
      * Run the migrations.
@@ -15,8 +15,11 @@ return new class extends Migration
             $table->id();
             $table->uuid('external_id')->unique();
             $table->string('merchant_id');
-            $table->decimal('amount', 10, 2);
-            $table->string('currency', 3);
+            $table->string('payer_name');
+            $table->string('service_code');
+            $table->string('invoice_number')->unique();
+            $table->decimal('bill_amount', 10, 2);
+            $table->string('currency_code', 3);
             $table->string('status');
             $table->string('callback_url');
             $table->json('metadata')->nullable();
@@ -31,4 +34,4 @@ return new class extends Migration
     {
         Schema::dropIfExists('invoices');
     }
-};
+}
