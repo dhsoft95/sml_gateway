@@ -14,10 +14,10 @@ class CreateInvoicesTable extends Migration
         Schema::create('invoices', function (Blueprint $table) {
             $table->id();
             $table->uuid('external_id')->unique();
-            $table->string('merchant_id');
+            $table->unsignedBigInteger('merchant_id');
             $table->string('payer_name');
+            $table->string('invoice_number');
             $table->string('service_code');
-            $table->string('invoice_number')->unique();
             $table->decimal('bill_amount', 10, 2);
             $table->string('currency_code', 3);
             $table->string('status');

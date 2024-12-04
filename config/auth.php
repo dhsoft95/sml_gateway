@@ -13,10 +13,6 @@ return [
     |
     */
 
-    'defaults' => [
-        'guard' => env('AUTH_GUARD', 'web'),
-        'passwords' => env('AUTH_PASSWORD_BROKER', 'users'),
-    ],
 
     /*
     |--------------------------------------------------------------------------
@@ -49,6 +45,10 @@ return [
             'driver' => 'token',
             'provider' => 'users',
             'hash' => false,
+        ],
+        'merchant' => [
+            'driver' => 'session',
+            'provider' => 'users',
         ],
     ],
 

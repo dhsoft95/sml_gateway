@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Merchant;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -10,23 +11,10 @@ class ApiAuthentication
 {
     public function handle(Request $request, Closure $next)
     {
-        // Get API key from various possible sources
         $apiKey = $request->header('X-API-Key') ??
             $request->header('API-Key') ??
             $request->query('api_key') ??
             $request->input('api_key');
-
-        // Get configured API key
-        $validApiKey = config('services.psp.api_key');
-
-        // Log for debugging
-        Log::info('API Authentication', [
-            'received_key' => $apiKey,
-            'valid_key' => $validApiKey,
-            'headers' => $request->headers->all(),
-            'method' => $request->method(),
-            'path' => $request->path()
-        ]);
 
         if (!$apiKey) {
             return response()->json([
@@ -37,7 +25,25 @@ class ApiAuthentication
             ], 401);
         }
 
-        if ($apiKey !== $validApiKey) {
+        $merchant = Merchant::where('api_key', $apiKey)
+        ->where('status', 'ACTIVE')
+            ->first();
+
+        Log::info('API Auth Debug', [
+            'provided_key' => $apiKey,
+            'hashed_key' => bcrypt($apiKey),
+            'found_merchant' => Merchant::where('api_key', bcrypt($apiKey))->exists(),
+            'all_merchant_keys' => Merchant::pluck('api_key')
+        ]);
+
+
+        if (!$merchant) {
+            Log::warning('Invalid API key used', [
+                'received_key' => substr($apiKey, 0, 8) . '...',
+                'method' => $request->method(),
+                'path' => $request->path()
+            ]);
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'Invalid API key provided',
@@ -45,6 +51,7 @@ class ApiAuthentication
             ], 401);
         }
 
+        $request->merge(['merchant' => $merchant]);
         return $next($request);
     }
 }

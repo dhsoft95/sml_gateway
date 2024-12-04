@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class PaymentController extends Controller
 {
@@ -232,11 +233,13 @@ class PaymentController extends Controller
                 'provider_reference' => $transaction->provider_reference,
                 'processed_at' => $transaction->processed_at,
                 'payer_details' => $transaction->payer_details,
-                'merchant_id' => $transaction->invoice->merchant_id,
+                'merchant_id' => $transaction->invoice->merchant->merchant_code,
                 'metadata' => $transaction->invoice->metadata
             ];
 
-            // Add security signature
+            // Ensure we sort the data before signing
+            ksort($callbackData);
+
             $callbackData['signature'] = hash_hmac('sha256',
                 json_encode($callbackData),
                 config('services.payment.webhook_secret')
@@ -246,28 +249,35 @@ class PaymentController extends Controller
                 ->withHeaders([
                     'X-API-Key' => config('services.payment.api_key'),
                     'Content-Type' => 'application/json',
+                    'User-Agent' => 'PaymentCallback/1.0',
+                    'X-Transaction-ID' => $transaction->transaction_id
                 ])
                 ->post($transaction->invoice->callback_url, $callbackData);
 
             if (!$response->successful()) {
-                throw new \Exception('Callback request failed with status: ' . $response->status());
+                throw new \Exception(sprintf(
+                    'Callback request failed with status: %d, Body: %s',
+                    $response->status(),
+                    substr($response->body(), 0, 500)
+                ));
             }
 
             Log::info('Payment callback sent successfully', [
                 'transaction_id' => $transaction->transaction_id,
-                'response_status' => $response->status()
+                'response_status' => $response->status(),
+                'response_body' => $response->json()
             ]);
 
         } catch (\Exception $e) {
             Log::error('Payment callback failed', [
                 'transaction_id' => $transaction->transaction_id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'callback_data' => $callbackData ?? null
             ]);
 
             $this->storeFailedCallback($transaction, $callbackData ?? []);
         }
     }
-
     private function storeFailedCallback($transaction, array $callbackData): void
     {
         FailedCallback::create([

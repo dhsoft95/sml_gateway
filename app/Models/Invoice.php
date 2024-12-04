@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Invoice extends Model
@@ -13,20 +14,26 @@ class Invoice extends Model
     protected $fillable = [
         'external_id',
         'merchant_id',
-        'bill_amount',
-        'service_code',
         'payer_name',
-        'currency_code',
         'invoice_number',
+        'service_code',
+        'bill_amount',
+        'currency_code',
         'status',
         'callback_url',
         'metadata'
+
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'metadata' => 'array',
     ];
+
+    public function merchant(): BelongsTo
+    {
+        return $this->belongsTo(Merchant::class, 'merchant_id');
+    }
 
     public const STATUS_PENDING = 'PENDING';
     public const STATUS_PROCESSING = 'PROCESSING';

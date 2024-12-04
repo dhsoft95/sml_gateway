@@ -1,0 +1,31 @@
+HTTrack3.49-2 launched on Tue, 03 Dec 2024 22:56:59 at https://darkrise-astro.vercel.app/
+(httrack https://darkrise-astro.vercel.app/ )
+
+Information, Warnings and Errors reported for this mirror:
+note:	the hts-log.txt file, and hts-cache folder, may contain sensitive information,
+	such as username/password authentication for websites mirrored in this project
+	do not share these files/folders if you want these information to remain private
+
+22:57:01	Warning: 	Note: due to https://darkrise-astro.vercel.app remote robots.txt rules, links beginning with these path will be forbidden: /api/* (see in the options to disable this)
+23:00:00	Warning: 	Retry after error -5 (error:00000005:lib(0)::reason(5)) at link https://darkrise-astro.vercel.app/changelog/ (from https://darkrise-astro.vercel.app/)
+23:00:10	Warning: 	Retry after error -5 (error:00000005:lib(0)::reason(5)) at link https://darkrise-astro.vercel.app/privacy-policy/ (from https://darkrise-astro.vercel.app/)
+23:00:10	Warning: 	Retry after error -5 (error:00000005:lib(0)::reason(5)) at link https://darkrise-astro.vercel.app/404/ (from https://darkrise-astro.vercel.app/)
+23:00:10	Warning: 	Retry after error -4 (No data (connection closed)) at link https://darkrise-astro.vercel.app/_astro/banner.DSZMVOBl_1H7hSD.webp (from https://darkrise-astro.vercel.app/)
+23:00:11	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/integration/kickstar/ (from https://darkrise-astro.vercel.app/)
+23:00:11	Warning: 	Retry after error -4 (No data (connection closed)) at link https://darkrise-astro.vercel.app/integration/slack/ (from https://darkrise-astro.vercel.app/integration/)
+23:00:14	Warning: 	Retry after error -4 (No data (connection closed)) at link https://darkrise-astro.vercel.app/integration/zapier/ (from https://darkrise-astro.vercel.app/integration/)
+23:00:14	Warning: 	Retry after error -5 (error:00000005:lib(0)::reason(5)) at link https://darkrise-astro.vercel.app/_astro/pattern-2.DmQCLOKF_O5xVc.webp (from https://darkrise-astro.vercel.app/integration/)
+23:00:14	Warning: 	Retry after error -5 (error:00000005:lib(0)::reason(5)) at link https://darkrise-astro.vercel.app/_astro/pattern-3.Cd3RD85D_19Rb6w.webp (from https://darkrise-astro.vercel.app/integration/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-1/t (from https://darkrise-astro.vercel.app/blog/post-1/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/404/ (from https://darkrise-astro.vercel.app/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-2/t (from https://darkrise-astro.vercel.app/blog/post-2/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-3/t (from https://darkrise-astro.vercel.app/blog/post-3/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-4/t (from https://darkrise-astro.vercel.app/blog/post-4/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-5/t (from https://darkrise-astro.vercel.app/blog/post-5/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-6/t (from https://darkrise-astro.vercel.app/blog/post-6/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-7/t (from https://darkrise-astro.vercel.app/blog/post-7/)
+23:00:40	Warning: 	Retry after error -5 (error:00000005:lib(0)::reason(5)) at link https://darkrise-astro.vercel.app/_astro/8.CON7qpg4_24tmFn.webp (from https://darkrise-astro.vercel.app/blog/post-8/)
+23:00:40	Error: 	"Not Found" (404) at link https://darkrise-astro.vercel.app/blog/post-8/t (from https://darkrise-astro.vercel.app/blog/post-8/)
+
+HTTrack Website Copier/3.49-2 mirror complete in 3 minutes 43 seconds : 153 links scanned, 133 files written (9691831 bytes overall) [7142403 bytes received at 32028 bytes/sec], 8534815 bytes transferred using HTTP compression in 68 files, ratio 67%
+(10 errors, 10 warnings, 0 messages)
