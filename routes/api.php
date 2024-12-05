@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\ApiAuthentication;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -19,12 +20,15 @@ Route::prefix('v1')->group(function () {
         Route::get('/invoices/{external_id}/qr', [InvoiceController::class, 'showQrCode']);
     });
 
-    // Payment routes with rate limiting
-    Route::middleware('throttle:payment')->group(function () {
-        Route::post('/payments/process', [PaymentController::class, 'process']);
-        Route::post('/payments/confirm', [PaymentController::class, 'confirm']);
-        Route::get('/payments/{transaction_id}/status', [PaymentController::class, 'status']);
-    });
+    Route::middleware(['throttle:payment', 'payment.api'])
+        ->withoutMiddleware([ApiAuthentication::class])
+        ->group(function () {
+            Route::controller(PaymentController::class)->prefix('payments')->name('payments.')->group(function () {
+                Route::post('/process', 'process')->name('process');
+                Route::post('/confirm', 'confirm')->name('confirm');
+                Route::get('/{transaction_id}/status', 'status')->name('status');
+            });
+        });
 
     // Webhook routes with rate limiting
     Route::post('/webhooks/simba', [WebhookController::class, 'handleSimbaWebhook'])

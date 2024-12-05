@@ -42,7 +42,7 @@ class PaymentController extends Controller
             if (!$qrCode || !$qrCode->invoice) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Invalid control number or expired QR code',
+                    'message' => 'Invalid control number or expired QR code.  Please generate a new invoice.',
                     'error_code' => 'INVALID_PAYMENT_REQUEST'
                 ], 400);
             }
@@ -114,7 +114,6 @@ class PaymentController extends Controller
             $transaction = Transaction::where('transaction_id', $validated['transaction_id'])
                 ->with('invoice')
                 ->first();
-
             // If transaction not found
             if (!$transaction) {
                 return response()->json([
@@ -190,25 +189,31 @@ class PaymentController extends Controller
 
     private function getPaymentInstructions($transaction): array
     {
+        $invoice = $transaction->invoice;
+
         return [
             'en' => [
                 'title' => 'Payment Instructions',
                 'amount' => number_format($transaction->amount, 2) . ' ' . $transaction->currency,
-                'steps' => [
-                    'Open Simba Money app on your phone',
-                    'Enter transaction ID: ' . $transaction->transaction_id,
-                    'Confirm payment amount: ' . number_format($transaction->amount, 2) . ' ' . $transaction->currency,
-                    'Enter your PIN to complete payment'
+                'transaction_id' => $transaction->transaction_id,
+                'payment_methods' => [
+                    'mobile_money' => 'Simba Money',
+                    'bank_transfer' => [
+                        'bank_name' => $invoice->bank_name ?? 'N/A',
+                        'bank_account' => $invoice->bank_account ?? 'N/A'
+                    ]
                 ]
             ],
             'sw' => [
                 'title' => 'Maelekezo ya Malipo',
                 'amount' => number_format($transaction->amount, 2) . ' ' . $transaction->currency,
-                'steps' => [
-                    'Fungua app ya Simba Money kwenye simu yako',
-                    'Ingiza namba ya muamala: ' . $transaction->transaction_id,
-                    'Hakiki kiasi cha malipo: ' . number_format($transaction->amount, 2) . ' ' . $transaction->currency,
-                    'Ingiza namba yako ya siri kukamilisha malipo'
+                'transaction_id' => $transaction->transaction_id,
+                'payment_methods' => [
+                    'mobile_money' => 'Simba Money',
+                    'bank_transfer' => [
+                        'bank_name' => $invoice->bank_name ?? 'N/A',
+                        'bank_account' => $invoice->bank_account ?? 'N/A'
+                    ]
                 ]
             ]
         ];

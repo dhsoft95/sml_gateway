@@ -48,12 +48,14 @@ class InvoiceController extends Controller
                 // Create invoice with merchant's actual ID
                 $invoice = Invoice::create([
                     'external_id' => Str::uuid(),
-                    'merchant_id' => $merchant->id, // Use actual merchant ID
+                    'merchant_id' => $merchant->id,
                     'payer_name' => $validated['payer_name'],
                     'invoice_number' => $this->generateInvoiceNumber($merchant),
                     'service_code' => $validated['service_code'],
                     'bill_amount' => $validated['bill_amount'],
                     'currency_code' => strtoupper($validated['currency_code']),
+                    'bank_name' => $validated['bank_name'] ?? null,
+                    'bank_account' => $validated['bank_account'] ?? null,
                     'status' => Invoice::STATUS_PENDING,
                     'callback_url' => $merchant->callback_url,
                     'metadata' => $validated['metadata'] ?? null,
@@ -127,6 +129,10 @@ class InvoiceController extends Controller
                     'formatted' => $this->formatAmount($invoice->bill_amount, $invoice->currency_code)
                 ],
                 'status' => $invoice->status,
+                'bank_details' => [
+                    'bank_name' => $invoice->bank_name,
+                    'bank_account' => $invoice->bank_account
+                ],
                 'merchant' => [
                     'id' => $invoice->merchant_id,
                     'callback_url' => $invoice->callback_url
@@ -179,14 +185,18 @@ class InvoiceController extends Controller
 
         return [
             'en' => sprintf(
-                'Scan this QR code or enter control number %s to pay %s',
+                'Scan this QR code or enter control number %s to pay %s. You can also transfer to bank account %s at %s',
                 $controlNumber,
-                $amount
+                $amount,
+                $invoice->bank_account ?? 'N/A',
+                $invoice->bank_name ?? 'N/A'
             ),
             'sw' => sprintf(
-                'Scan QR code au ingiza namba %s kulipa %s',
+                'Scan QR code au ingiza namba %s kulipa %s. Unaweza pia kutuma kwenye akaunti ya benki %s katika %s',
                 $controlNumber,
-                $amount
+                $amount,
+                $invoice->bank_account ?? 'N/A',
+                $invoice->bank_name ?? 'N/A'
             )
         ];
     }

@@ -7,29 +7,17 @@ use Illuminate\Validation\Rule;
 
 class StoreInvoiceRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        // You might want to add merchant authorization logic here
-        // For example: return $this->user()->can('create-invoice');
         return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, mixed>
-     */
     public function rules(): array
     {
         return [
             'merchant_id' => [
                 'required',
                 'string',
-                // You might want to add merchant existence validation
-                // Rule::exists('merchants', 'id')
             ],
             'payer_name' => [
                 'required',
@@ -39,8 +27,6 @@ class StoreInvoiceRequest extends FormRequest
             'service_code' => [
                 'required',
                 'string',
-                // You might want to add valid service codes validation
-                // Rule::in(['BILL_PAY', 'MERCHANT_PAY', 'UTILITY_PAY'])
             ],
             'invoice_number' => [
                 'required',
@@ -52,18 +38,28 @@ class StoreInvoiceRequest extends FormRequest
                 'required',
                 'numeric',
                 'min:0',
-                'max:999999999.99' // Adjust based on your business rules
+                'max:999999999.99'
             ],
             'currency_code' => [
                 'required',
                 'string',
                 'size:3',
-                Rule::in(['TZS', 'USD', 'EUR']) // Add supported currencies
+                Rule::in(['TZS', 'USD', 'EUR'])
             ],
             'callback_url' => [
                 'required',
                 'url',
                 'max:2048'
+            ],
+            'bank_name' => [
+                'required',
+                'string',
+                'max:255'
+            ],
+            'bank_account' => [
+                'required',
+                'string',
+                'max:50'
             ],
             'metadata' => [
                 'sometimes',
@@ -97,11 +93,6 @@ class StoreInvoiceRequest extends FormRequest
         ];
     }
 
-    /**
-     * Get custom attributes for validator errors.
-     *
-     * @return array<string, string>
-     */
     public function attributes(): array
     {
         return [
@@ -112,6 +103,8 @@ class StoreInvoiceRequest extends FormRequest
             'bill_amount' => 'bill amount',
             'currency_code' => 'currency code',
             'callback_url' => 'callback URL',
+            'bank_name' => 'bank name',
+            'bank_account' => 'bank account',
             'metadata.order_id' => 'order ID',
             'metadata.customer_id' => 'customer ID',
             'metadata.description' => 'description',
@@ -120,11 +113,6 @@ class StoreInvoiceRequest extends FormRequest
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     *
-     * @return array<string, string>
-     */
     public function messages(): array
     {
         return [
@@ -134,20 +122,20 @@ class StoreInvoiceRequest extends FormRequest
             'currency_code.in' => 'The selected currency is not supported.',
             'callback_url.url' => 'The callback URL must be a valid URL.',
             'metadata.array' => 'The metadata must be provided as an array.',
+            'bank_name.required' => 'The bank name is required.',
+            'bank_account.required' => 'The bank account is required.',
+            'bank_account.max' => 'The bank account may not exceed 50 characters.',
         ];
     }
 
-    /**
-     * Prepare the data for validation.
-     *
-     * @return void
-     */
     protected function prepareForValidation(): void
     {
         $this->merge([
             'currency_code' => strtoupper($this->currency_code),
             'invoice_number' => trim($this->invoice_number),
-            'payer_name' => trim($this->payer_name)
+            'payer_name' => trim($this->payer_name),
+            'bank_name' => trim($this->bank_name),
+            'bank_account' => trim($this->bank_account),
         ]);
     }
 }

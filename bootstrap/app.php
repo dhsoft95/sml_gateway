@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\PaymentApiAuthentication;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -21,16 +22,17 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
             \Illuminate\Session\Middleware\StartSession::class,
             ApiAuthentication::class,
+            PaymentApiAuthentication::class,
         ]);
 
-        // Alias
+        // Alias middleware
         $middleware->alias([
             'api.auth' => ApiAuthentication::class,
+            'payment.api' => PaymentApiAuthentication::class,
         ]);
 
         // Groups
         $middleware->group('api', [
-            'api.auth',
             'throttle:api',
         ]);
     })
@@ -40,4 +42,3 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
     })->create();
-

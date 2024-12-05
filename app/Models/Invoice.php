@@ -20,6 +20,8 @@ class Invoice extends Model
         'bill_amount',
         'currency_code',
         'status',
+        'bank_name',
+        'bank_account',
         'callback_url',
         'metadata'
 

@@ -24,6 +24,11 @@ return [
         'api_key' => env('SIMBA_API_KEY'),
     ],
 
+    'payment' => [
+        'api_key' => env('PAYMENT_API_KEY'),
+        'webhook_secret' => env('PAYMENT_WEBHOOK_SECRET'),
+    ],
+
 
 
     'postmark' => [
